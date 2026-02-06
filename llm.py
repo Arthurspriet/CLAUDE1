@@ -43,7 +43,10 @@ class LLMInterface:
 
     def _set_system_prompt(self):
         """Set or update the system prompt."""
-        prompt = build_system_prompt(self.config.working_dir, self.config.model, compact=self.config.compact)
+        prompt = build_system_prompt(
+            self.config.working_dir, self.config.model,
+            compact=self.config.compact, profile=self.config.profile,
+        )
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0] = {"role": "system", "content": prompt}
         else:
@@ -113,7 +116,12 @@ class LLMInterface:
         # Truncate if context is getting large
         self._truncate_if_needed()
 
-        tool_defs = self.tools.ollama_tool_definitions()
+        # Skip tool definitions if profile says tools aren't supported
+        profile = self.config.profile
+        if profile and not profile.supports_tools:
+            tool_defs = []
+        else:
+            tool_defs = self.tools.ollama_tool_definitions()
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             if self._cancelled:
@@ -130,10 +138,20 @@ class LLMInterface:
             # Emit thinking start
             yield StreamChunk(type="thinking_start")
 
-            # Build options dict
+            # Build options dict — merge profile defaults, then user overrides
             options: dict[str, Any] = {"num_ctx": self.config.num_ctx}
+            if profile:
+                if profile.top_p is not None:
+                    options["top_p"] = profile.top_p
+                if profile.top_k is not None:
+                    options["top_k"] = profile.top_k
+                if profile.repeat_penalty is not None:
+                    options["repeat_penalty"] = profile.repeat_penalty
+            # Temperature precedence: user /temp > profile default > Ollama default
             if self.config.temperature is not None:
                 options["temperature"] = self.config.temperature
+            elif profile and profile.temperature is not None:
+                options["temperature"] = profile.temperature
 
             # Retry loop with exponential backoff
             stream = None

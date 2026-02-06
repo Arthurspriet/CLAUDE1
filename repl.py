@@ -9,7 +9,8 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 
-from config import AppConfig, TOOL_CAPABLE_MODELS, NON_TOOL_MODELS
+from config import AppConfig
+from model_profiles import get_profile, format_profile_info
 from llm import LLMInterface, StreamChunk
 from session import save_session, load_session, list_sessions, auto_save_session, get_latest_session, export_as_markdown
 from stats import SessionStats
@@ -64,13 +65,30 @@ class REPL:
                 renderer.show_info("Usage: /model <name>")
                 return True
             self.config.model = arg
+            # Resolve profile for new model
+            ollama_family = None
+            try:
+                info = ollama.show(arg)
+                details = info.get("details", {}) if isinstance(info, dict) else getattr(info, "details", None)
+                if details:
+                    ollama_family = details.get("family", "") if isinstance(details, dict) else getattr(details, "family", "")
+            except Exception:
+                pass
+            profile = get_profile(arg, ollama_family=ollama_family)
+            self.config.profile = profile
+            self.config.num_ctx = profile.num_ctx
             self.llm.update_model(arg)
             renderer.show_model_changed(arg)
+            renderer.show_info(format_profile_info(profile))
+            if not profile.supports_tools:
+                renderer.show_info("Tools disabled for this model — text-only mode.")
+            return True
 
-            # Warn if model might not support tools
-            base = arg.split(":")[0]
-            if base in NON_TOOL_MODELS:
-                renderer.show_error(f"Warning: {base} may not support tool calling.")
+        elif cmd == "/profile":
+            if self.config.profile:
+                renderer.show_info(format_profile_info(self.config.profile))
+            else:
+                renderer.show_info("No profile loaded.")
             return True
 
         elif cmd == "/models":

@@ -1,9 +1,15 @@
 """System prompt template for the coding assistant."""
 
+from __future__ import annotations
+
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from config import DATA_DIR
+
+if TYPE_CHECKING:
+    from model_profiles import ModelProfile
 
 
 def _get_git_info(working_dir: str) -> str | None:
@@ -72,7 +78,8 @@ def _load_claude_md(working_dir: str) -> str | None:
     return "\n\n".join(sections) if sections else None
 
 
-def build_system_prompt(working_dir: str, model_name: str, compact: bool = False) -> str:
+def build_system_prompt(working_dir: str, model_name: str, compact: bool = False,
+                        profile: ModelProfile | None = None) -> str:
     prompt = f"""You are Claude1, a local coding assistant running in the terminal. You help users with software engineering tasks by reading, writing, and editing files, running commands, and searching codebases.
 
 ## Environment
@@ -84,7 +91,11 @@ def build_system_prompt(working_dir: str, model_name: str, compact: bool = False
     if git_info:
         prompt += f"\n{git_info}"
 
-    prompt += """
+    # Conditionally include tools section based on profile
+    supports_tools = profile.supports_tools if profile else True
+
+    if supports_tools:
+        prompt += """
 
 ## Available Tools
 
@@ -108,6 +119,19 @@ You have access to these tools. Use them proactively to help the user:
 6. **Stay in scope**: Only modify files the user asks about. Don't make unnecessary changes.
 7. **Be concise**: Keep responses short and focused. Don't over-explain simple operations.
 """
+    else:
+        prompt += """
+
+## Text-Only Mode
+
+You are running in text-only mode — you do NOT have access to any tools.
+Provide code for the user to copy and run manually.
+When showing file changes, use clear before/after code blocks with full file paths.
+"""
+
+    # Append profile format rules
+    if profile and profile.system_prompt_suffix:
+        prompt += f"\n## Output Format\n\n{profile.system_prompt_suffix}\n"
 
     # Add CLAUDE.md content
     claude_md = _load_claude_md(working_dir)

@@ -40,4 +40,4 @@ def get_prompt_text(model_name: str) -> str:
     """Build the prompt string showing current model."""
     # Shorten the model name for display
     short = model_name.split(":")[0]
-    return f"{short} > "
+    return f"{short} ❯ "

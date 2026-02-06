@@ -1,33 +1,18 @@
 """Configuration constants and AppConfig dataclass."""
 
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from model_profiles import ModelProfile
 
 
 # Default model for tool-calling tasks
 DEFAULT_MODEL = "devstral-small-2:24b"
-
-# Models known to support Ollama native tool calling
-TOOL_CAPABLE_MODELS = {
-    "devstral-small-2:24b",
-    "devstral-small-2",
-    "qwen3:4b",
-    "qwen3:8b",
-    "qwen3:1.7b",
-    "cogito:14b",
-    "cogito:8b",
-    "mistral:instruct",
-    "mistral:latest",
-    "llama3.2:3b",
-}
-
-# Models known NOT to support tools
-NON_TOOL_MODELS = {
-    "gemma3",
-    "deepseek-r1",
-    "llama3.2:1b",
-}
 
 # Base directory for all claude1 data
 DATA_DIR = Path.home() / ".claude1"
@@ -67,6 +52,7 @@ class AppConfig:
     compact: bool = False
     verbose: bool = False
     model_info: dict | None = None
+    profile: ModelProfile | None = None
 
     def __post_init__(self):
         # Ensure data directories exist

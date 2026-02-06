@@ -8,6 +8,7 @@ import click
 import ollama
 
 from config import AppConfig, DEFAULT_MODEL
+from model_profiles import get_profile
 
 
 @click.command()
@@ -75,6 +76,10 @@ def main(model: str, auto_accept: bool, working_dir: str | None, print_mode: boo
     except Exception:
         pass
 
+    # Resolve model profile
+    ollama_family = model_info.get("family", "") if model_info else None
+    profile = get_profile(model, ollama_family=ollama_family)
+
     # Handle pipe/stdin input
     stdin_content = None
     if not sys.stdin.isatty():
@@ -104,9 +109,11 @@ def main(model: str, auto_accept: bool, working_dir: str | None, print_mode: boo
         model=model,
         working_dir=wd,
         auto_accept_tools=auto_accept or print_mode,
+        num_ctx=profile.num_ctx,
         temperature=temperature,
         verbose=verbose,
         model_info=model_info,
+        profile=profile,
     )
 
     # Add project dir to path for imports

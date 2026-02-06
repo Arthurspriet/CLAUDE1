@@ -59,6 +59,7 @@ def show_help():
     table.add_row("/resume", "Resume last auto-saved session")
     table.add_row("/auto", "Toggle auto-accept for tool confirmations")
     table.add_row("/temp [value]", "Get/set temperature (0.0-2.0)")
+    table.add_row("/profile", "Show current model profile settings")
     table.add_row("/compact", "Toggle compact mode (terse responses)")
     table.add_row("/undo", "Undo last file edit/write")
     table.add_row("/export [file]", "Export conversation as markdown")
