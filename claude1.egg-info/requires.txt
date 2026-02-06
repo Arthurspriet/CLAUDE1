@@ -1,0 +1,4 @@
+click
+ollama
+prompt_toolkit
+rich

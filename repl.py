@@ -7,12 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import ollama
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 
-from config import AppConfig, DATA_DIR
+from config import AppConfig, DATA_DIR, parse_model_spec
 from doctor import run_health_checks
 from model_profiles import get_profile, format_profile_info
 from llm import LLMInterface
@@ -75,19 +74,23 @@ class REPL:
 
         elif cmd == "/model":
             if not arg:
-                renderer.show_info(f"Current model: {self.config.model}")
-                renderer.show_info("Usage: /model <name>")
+                renderer.show_info(f"Current model: {self.config.model} (provider: {self.config.provider})")
+                renderer.show_info("Usage: /model <name>  (prefix with 'hf:' for HuggingFace)")
                 return True
+            provider, model_id = parse_model_spec(arg)
             self.config.model = arg
+            self.config.provider = provider
             # Resolve profile for new model
             ollama_family = None
-            try:
-                info = ollama.show(arg)
-                details = info.get("details", {}) if isinstance(info, dict) else getattr(info, "details", None)
-                if details:
-                    ollama_family = details.get("family", "") if isinstance(details, dict) else getattr(details, "family", "")
-            except Exception:
-                pass
+            if provider == "ollama":
+                try:
+                    import ollama
+                    info = ollama.show(arg)
+                    details = info.get("details", {}) if isinstance(info, dict) else getattr(info, "details", None)
+                    if details:
+                        ollama_family = details.get("family", "") if isinstance(details, dict) else getattr(details, "family", "")
+                except Exception:
+                    pass
             profile = get_profile(arg, ollama_family=ollama_family)
             self.config.profile = profile
             self.config.num_ctx = profile.num_ctx
@@ -107,11 +110,13 @@ class REPL:
 
         elif cmd == "/models":
             try:
+                import ollama
                 models = ollama.list()
                 names = [m.model for m in models.models]
                 renderer.show_models(sorted(names), self.config.model)
             except Exception as e:
-                renderer.show_error(f"Failed to list models: {e}")
+                renderer.show_error(f"Failed to list Ollama models: {e}")
+            renderer.show_info("Tip: Use 'hf:<org>/<model>' for HuggingFace models (e.g. hf:meta-llama/Meta-Llama-3-8B-Instruct)")
             return True
 
         elif cmd == "/clear":

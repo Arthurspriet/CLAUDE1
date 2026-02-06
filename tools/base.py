@@ -52,8 +52,8 @@ class BaseTool(ABC):
             return p.resolve()
         return (self.working_dir / p).resolve()
 
-    def to_ollama_tool(self) -> dict:
-        """Convert to Ollama tool-calling format."""
+    def to_tool_definition(self) -> dict:
+        """Convert to OpenAI-compatible tool-calling format (used by both Ollama and HuggingFace)."""
         return {
             "type": "function",
             "function": {
@@ -62,3 +62,6 @@ class BaseTool(ABC):
                 "parameters": self.parameters,
             },
         }
+
+    # Backwards compatibility alias
+    to_ollama_tool = to_tool_definition

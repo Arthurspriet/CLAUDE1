@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: claude1
+Version: 0.1.0
+Summary: Local coding assistant powered by Ollama
+Requires-Python: >=3.10
+Requires-Dist: click
+Requires-Dist: ollama
+Requires-Dist: prompt_toolkit
+Requires-Dist: rich

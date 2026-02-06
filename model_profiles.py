@@ -164,6 +164,38 @@ PROFILES: dict[str, ModelProfile] = {
         num_ctx=4096,
         system_prompt_suffix=_STANDARD_FORMAT_RULES + "\n" + _NO_TOOLS_RULES + "\n" + _SMALL_MODEL_RULES,
     ),
+    # HuggingFace model families
+    "meta-llama": ModelProfile(
+        family="meta-llama",
+        display_name="Meta Llama (HF)",
+        supports_tools=True,
+        num_ctx=8192,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
+    ),
+    "mistralai": ModelProfile(
+        family="mistralai",
+        display_name="Mistral AI (HF)",
+        supports_tools=True,
+        num_ctx=8192,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
+    ),
+    "Qwen": ModelProfile(
+        family="Qwen",
+        display_name="Qwen (HF)",
+        supports_tools=True,
+        num_ctx=8192,
+        temperature=0.7,
+        top_p=0.8,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR + "\n" + _NO_OVER_GENERATION,
+        system_prompt_suffix=_STANDARD_FORMAT_RULES + "\n" + _QWEN_THINKING_RULES,
+    ),
+    "microsoft": ModelProfile(
+        family="microsoft",
+        display_name="Microsoft (HF)",
+        supports_tools=True,
+        num_ctx=8192,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
+    ),
 }
 
 DEFAULT_PROFILE = ModelProfile(
@@ -181,28 +213,39 @@ def get_profile(model_name: str, ollama_family: str | None = None) -> ModelProfi
     """Resolve a ModelProfile for the given model name.
 
     Fallback chain:
-      1. Exact model name match (handles variant overrides like 'llama3.2:1b')
-      2. Ollama family metadata from ollama.show()
-      3. Progressive prefix match ('devstral-small-2:24b' -> 'devstral')
-      4. DEFAULT_PROFILE
+      1. Strip hf: prefix for HuggingFace models
+      2. Exact model name match (handles variant overrides like 'llama3.2:1b')
+      3. Ollama family metadata from ollama.show()
+      4. HF org-name fallback ('meta-llama/Llama-3-8B' -> match 'meta-llama')
+      5. Progressive prefix match ('devstral-small-2:24b' -> 'devstral')
+      6. DEFAULT_PROFILE
     """
-    # 1. Exact model name match
-    if model_name in PROFILES:
-        return PROFILES[model_name]
+    # 1. Strip hf: prefix
+    lookup_name = model_name
+    if lookup_name.startswith("hf:"):
+        lookup_name = lookup_name[3:]
 
-    # 2. Ollama family metadata
+    # 2. Exact model name match
+    if lookup_name in PROFILES:
+        return PROFILES[lookup_name]
+
+    # 3. Ollama family metadata
     if ollama_family and ollama_family in PROFILES:
         return PROFILES[ollama_family]
 
-    # 3. Progressive prefix match — try longest prefix first
-    # e.g. "devstral-small-2:24b" checks "devstral-small-2:24b", "devstral-small-2:24", ...
-    # We strip tag first, then try progressively shorter prefixes
-    base = model_name.split(":")[0]
+    # 4. HF org-name fallback (e.g. 'meta-llama/Llama-3-8B' -> try 'meta-llama')
+    if "/" in lookup_name:
+        org = lookup_name.split("/", 1)[0]
+        if org in PROFILES:
+            return PROFILES[org]
+
+    # 5. Progressive prefix match — try longest prefix first
+    base = lookup_name.split(":")[0]
     for key in sorted(PROFILES.keys(), key=len, reverse=True):
-        if base.startswith(key) or model_name.startswith(key):
+        if base.startswith(key) or lookup_name.startswith(key):
             return PROFILES[key]
 
-    # 4. Fallback
+    # 6. Fallback
     return DEFAULT_PROFILE
 
 

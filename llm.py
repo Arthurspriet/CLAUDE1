@@ -1,15 +1,26 @@
 """LLM interface with agentic tool-calling loop."""
 
 import json
+import queue
+import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
 import ollama
 
-from config import AppConfig, MAX_TOOL_ITERATIONS, MAX_RETRIES, RETRY_BASE_DELAY, CONTEXT_WINDOW_RESERVE
+from config import AppConfig, HF_TOKEN, HF_ENDPOINT, MAX_TOOL_ITERATIONS, MAX_RETRIES, RETRY_BASE_DELAY, CONTEXT_WINDOW_RESERVE, HF_CLIENT_TIMEOUT, HF_STREAM_CHUNK_TIMEOUT
 from system_prompt import build_system_prompt
 from tools import ToolRegistry
+
+# Guarded import for huggingface_hub
+try:
+    from huggingface_hub import InferenceClient
+    HF_AVAILABLE = True
+except ImportError:
+    InferenceClient = None
+    HF_AVAILABLE = False
 
 
 @dataclass
@@ -38,9 +49,26 @@ class LLMInterface:
         self._cancelled = False
         self._last_prompt_eval_count: int | None = None
         self.active_tool_filter: list[str] | None = None
+        self._hf_client: Any = None
 
         # Initialize system prompt
         self._set_system_prompt()
+
+    def _get_hf_client(self):
+        """Lazily initialize and return the HuggingFace InferenceClient."""
+        if self._hf_client is None:
+            if not HF_AVAILABLE:
+                raise RuntimeError("huggingface_hub is not installed. Run: pip install huggingface_hub")
+            kwargs: dict[str, Any] = {"timeout": HF_CLIENT_TIMEOUT}
+            # Local TGI endpoint takes priority
+            endpoint = self.config.hf_endpoint or HF_ENDPOINT
+            if endpoint:
+                kwargs["base_url"] = endpoint
+            token = HF_TOKEN
+            if token:
+                kwargs["token"] = token
+            self._hf_client = InferenceClient(**kwargs)
+        return self._hf_client
 
     def _set_system_prompt(self):
         """Set or update the system prompt."""
@@ -56,7 +84,12 @@ class LLMInterface:
 
     def update_model(self, model: str):
         """Switch to a different model."""
+        from config import parse_model_spec
+        provider, model_id = parse_model_spec(model)
         self.config.model = model
+        self.config.provider = provider
+        # Reset HF client so it gets re-initialized with new settings
+        self._hf_client = None
         self._set_system_prompt()
 
     def clear_history(self):
@@ -170,20 +203,179 @@ class LLMInterface:
 
     def _run_planning_call(self, plan_prompt: str) -> str | None:
         """Make a non-streaming API call to get the model's plan. Returns plan text or None."""
-        # Build a temporary message list: current history + plan prompt as user message
         plan_messages = list(self.messages) + [{"role": "user", "content": plan_prompt}]
 
         try:
-            response = ollama.chat(
-                model=self.config.model,
-                messages=plan_messages,
-                stream=False,
-                options={"num_ctx": self.config.num_ctx},
-            )
-            content = response.get("message", {}).get("content", "") if isinstance(response, dict) else getattr(getattr(response, "message", None), "content", "")
+            if self.config.provider == "huggingface":
+                client = self._get_hf_client()
+                response = client.chat_completion(
+                    model=self.config.model[3:],  # strip hf: prefix
+                    messages=plan_messages,
+                    max_tokens=1024,
+                    stream=False,
+                )
+                content = response.choices[0].message.content if response.choices else ""
+            else:
+                response = ollama.chat(
+                    model=self.config.model,
+                    messages=plan_messages,
+                    stream=False,
+                    options={"num_ctx": self.config.num_ctx},
+                )
+                content = response.get("message", {}).get("content", "") if isinstance(response, dict) else getattr(getattr(response, "message", None), "content", "")
             return content.strip() if content and content.strip() else None
         except Exception:
             return None
+
+    def _make_ollama_api_call(self, tool_defs: list[dict], options: dict) -> Any:
+        """Make a streaming API call to Ollama. Returns the stream iterator."""
+        return ollama.chat(
+            model=self.config.model,
+            messages=self.messages,
+            tools=tool_defs,
+            stream=True,
+            options=options,
+        )
+
+    def _make_hf_api_call(self, tool_defs: list[dict]) -> Any:
+        """Make a streaming API call to HuggingFace. Returns the stream iterator."""
+        client = self._get_hf_client()
+        kwargs: dict[str, Any] = {
+            "model": self.config.model[3:],  # strip hf: prefix
+            "messages": self.messages,
+            "max_tokens": 4096,
+            "stream": True,
+        }
+        if tool_defs:
+            kwargs["tools"] = tool_defs
+        # Temperature
+        if self.config.temperature is not None:
+            kwargs["temperature"] = self.config.temperature
+        elif self.config.profile and self.config.profile.temperature is not None:
+            kwargs["temperature"] = self.config.profile.temperature
+        return client.chat_completion(**kwargs)
+
+    def _process_ollama_stream(self, stream) -> Iterator[tuple[str, list[dict], bool]]:
+        """Process Ollama stream chunks. Yields (token, tool_calls_batch, is_done) and stats side-effects."""
+        for chunk in stream:
+            if self._cancelled:
+                yield ("", [], False)
+                return
+
+            msg = chunk.get("message", {})
+            token = msg.get("content", "")
+            tc_batch = msg.get("tool_calls", [])
+
+            is_done = chunk.get("done", False)
+            if is_done:
+                prompt_eval_count = chunk.get("prompt_eval_count", 0)
+                eval_count = chunk.get("eval_count", 0)
+                eval_duration = chunk.get("eval_duration", 0)
+                self._last_prompt_eval_count = prompt_eval_count
+                self._ollama_stats = {
+                    "prompt_eval_count": prompt_eval_count,
+                    "eval_count": eval_count,
+                    "eval_duration": eval_duration,
+                }
+
+            yield (token, tc_batch, is_done)
+
+    @staticmethod
+    def _iter_with_timeout(stream, timeout: float):
+        """Wrap a blocking stream iterator so that each chunk must arrive within *timeout* seconds.
+
+        Uses a background thread to read from the stream and a queue to shuttle
+        chunks back to the caller.  Raises TimeoutError if no chunk arrives in time.
+        """
+        _SENTINEL = object()
+        q: queue.Queue = queue.Queue()
+
+        def _reader():
+            try:
+                for item in stream:
+                    q.put(item)
+                q.put(_SENTINEL)
+            except Exception as exc:
+                q.put(exc)
+
+        t = threading.Thread(target=_reader, daemon=True)
+        t.start()
+
+        while True:
+            try:
+                item = q.get(timeout=timeout)
+            except queue.Empty:
+                raise TimeoutError(
+                    f"HuggingFace stream stalled: no data received for {timeout}s"
+                )
+            if item is _SENTINEL:
+                return
+            if isinstance(item, Exception):
+                raise item
+            yield item
+
+    def _process_hf_stream(self, stream) -> Iterator[tuple[str, list[dict], bool]]:
+        """Process HuggingFace stream chunks with tool call delta accumulation.
+
+        HF streams tool calls incrementally: name in one chunk, args across several.
+        We accumulate by tool call index and yield completed tool calls at the end.
+
+        Each chunk must arrive within HF_STREAM_CHUNK_TIMEOUT seconds or a
+        TimeoutError is raised (caught by the caller's except block).
+        """
+        # Accumulators for tool call deltas indexed by position
+        tc_accum: dict[int, dict] = {}
+
+        for chunk in self._iter_with_timeout(stream, HF_STREAM_CHUNK_TIMEOUT):
+            if self._cancelled:
+                yield ("", [], False)
+                return
+
+            choice = chunk.choices[0] if chunk.choices else None
+            if choice is None:
+                continue
+
+            delta = choice.delta
+            token = delta.content or "" if delta else ""
+
+            # Accumulate tool call deltas
+            if delta and delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index if hasattr(tc_delta, "index") and tc_delta.index is not None else 0
+                    if idx not in tc_accum:
+                        tc_accum[idx] = {"id": "", "name": "", "arguments": ""}
+
+                    if hasattr(tc_delta, "id") and tc_delta.id:
+                        tc_accum[idx]["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            tc_accum[idx]["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            tc_accum[idx]["arguments"] += tc_delta.function.arguments
+
+            is_done = choice.finish_reason is not None
+            yield (token, [], is_done)
+
+        # After stream ends, convert accumulated tool calls into standard format
+        if tc_accum:
+            completed_calls = []
+            for idx in sorted(tc_accum.keys()):
+                tc = tc_accum[idx]
+                call_id = tc["id"] or f"call_{uuid.uuid4().hex[:8]}"
+                args_str = tc["arguments"]
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except json.JSONDecodeError:
+                    args = {"raw": args_str}
+                completed_calls.append({
+                    "id": call_id,
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": args,
+                    },
+                })
+            # Yield the completed tool calls
+            yield ("", completed_calls, True)
 
     def send_message(self, user_input: str) -> Iterator[StreamChunk]:
         """Send a user message and yield streaming chunks through the agentic loop."""
@@ -193,12 +385,14 @@ class LLMInterface:
         # Truncate if context is getting large
         self._truncate_if_needed()
 
+        is_hf = self.config.provider == "huggingface"
+
         # Skip tool definitions if profile says tools aren't supported
         profile = self.config.profile
         if profile and not profile.supports_tools:
             tool_defs = []
         else:
-            tool_defs = self.tools.ollama_tool_definitions()
+            tool_defs = self.tools.tool_definitions()
             # Apply tool filter if active (e.g. during skill execution)
             if self.active_tool_filter is not None:
                 allowed = set(self.active_tool_filter)
@@ -213,52 +407,58 @@ class LLMInterface:
             if self.config.verbose:
                 yield StreamChunk(
                     type="debug",
-                    content=f"API call: {len(self.messages)} messages, model={self.config.model}, tools={len(tool_defs)}"
+                    content=f"API call: {len(self.messages)} messages, model={self.config.model}, provider={self.config.provider}, tools={len(tool_defs)}"
                 )
 
             # Emit thinking start
             yield StreamChunk(type="thinking_start")
 
-            # Build options dict — merge profile defaults, then user overrides
+            # Build Ollama options dict (only used for Ollama provider)
             options: dict[str, Any] = {"num_ctx": self.config.num_ctx}
-            if profile:
-                if profile.top_p is not None:
-                    options["top_p"] = profile.top_p
-                if profile.top_k is not None:
-                    options["top_k"] = profile.top_k
-                if profile.repeat_penalty is not None:
-                    options["repeat_penalty"] = profile.repeat_penalty
-            # Temperature precedence: user /temp > profile default > Ollama default
-            if self.config.temperature is not None:
-                options["temperature"] = self.config.temperature
-            elif profile and profile.temperature is not None:
-                options["temperature"] = profile.temperature
+            if not is_hf:
+                if profile:
+                    if profile.top_p is not None:
+                        options["top_p"] = profile.top_p
+                    if profile.top_k is not None:
+                        options["top_k"] = profile.top_k
+                    if profile.repeat_penalty is not None:
+                        options["repeat_penalty"] = profile.repeat_penalty
+                if self.config.temperature is not None:
+                    options["temperature"] = self.config.temperature
+                elif profile and profile.temperature is not None:
+                    options["temperature"] = profile.temperature
 
             # Retry loop with exponential backoff
             stream = None
+            self._ollama_stats = None
             for attempt in range(MAX_RETRIES):
                 try:
-                    stream = ollama.chat(
-                        model=self.config.model,
-                        messages=self.messages,
-                        tools=tool_defs,
-                        stream=True,
-                        options=options,
-                    )
+                    if is_hf:
+                        stream = self._make_hf_api_call(tool_defs)
+                    else:
+                        stream = self._make_ollama_api_call(tool_defs, options)
                     break
-                except (ollama.ResponseError, ConnectionError, TimeoutError) as e:
-                    if attempt < MAX_RETRIES - 1:
+                except Exception as e:
+                    is_retryable = isinstance(e, (ConnectionError, TimeoutError, OSError))
+                    if is_hf:
+                        # Retry on HF-specific transient errors
+                        try:
+                            from huggingface_hub import errors as hf_errors
+                            is_retryable = is_retryable or isinstance(
+                                e, (hf_errors.InferenceTimeoutError, hf_errors.OverloadedError, hf_errors.HfHubHTTPError)
+                            )
+                        except ImportError:
+                            pass
+                    else:
+                        is_retryable = is_retryable or isinstance(e, ollama.ResponseError)
+                    if is_retryable and attempt < MAX_RETRIES - 1:
                         delay = RETRY_BASE_DELAY * (2 ** attempt)
                         yield StreamChunk(type="text", content=f"\n[Retry {attempt + 1}/{MAX_RETRIES} in {delay:.0f}s...]\n")
                         time.sleep(delay)
                     else:
                         yield StreamChunk(type="thinking_stop")
-                        yield StreamChunk(type="error", content=f"Failed after {MAX_RETRIES} retries: {e}")
+                        yield StreamChunk(type="error", content=f"Failed after {MAX_RETRIES} retries: {e}" if is_retryable else f"Error: {e}")
                         return
-                except Exception as e:
-                    yield StreamChunk(type="thinking_stop")
-                    yield StreamChunk(type="error", content=f"Error: {e}")
-                    return
 
             if stream is None:
                 yield StreamChunk(type="thinking_stop")
@@ -271,17 +471,17 @@ class LLMInterface:
             thinking_stopped = False
 
             try:
-                for chunk in stream:
+                # Use provider-specific stream processor
+                processor = self._process_hf_stream(stream) if is_hf else self._process_ollama_stream(stream)
+
+                for token, tc_batch, is_done in processor:
                     if self._cancelled:
                         if not thinking_stopped:
                             yield StreamChunk(type="thinking_stop")
                         yield StreamChunk(type="done", content="[cancelled]")
                         return
 
-                    msg = chunk.get("message", {})
-
                     # Stream text content
-                    token = msg.get("content", "")
                     if token:
                         if not thinking_stopped:
                             yield StreamChunk(type="thinking_stop")
@@ -290,26 +490,17 @@ class LLMInterface:
                         yield StreamChunk(type="text", content=token)
 
                     # Collect tool calls
-                    if msg.get("tool_calls"):
+                    if tc_batch:
                         if not thinking_stopped:
                             yield StreamChunk(type="thinking_stop")
                             thinking_stopped = True
-                        tool_calls.extend(msg["tool_calls"])
+                        tool_calls.extend(tc_batch)
 
-                    # Capture stats from the final chunk
-                    if chunk.get("done"):
-                        prompt_eval_count = chunk.get("prompt_eval_count", 0)
-                        eval_count = chunk.get("eval_count", 0)
-                        eval_duration = chunk.get("eval_duration", 0)
-                        self._last_prompt_eval_count = prompt_eval_count
-
-                        if prompt_eval_count or eval_count:
-                            stats_data = {
-                                "prompt_eval_count": prompt_eval_count,
-                                "eval_count": eval_count,
-                                "eval_duration": eval_duration,
-                            }
-                            yield StreamChunk(type="stats", content=json.dumps(stats_data))
+                    # Emit stats on done (Ollama only — HF doesn't provide these)
+                    if is_done and not is_hf and self._ollama_stats:
+                        stats = self._ollama_stats
+                        if stats.get("prompt_eval_count") or stats.get("eval_count"):
+                            yield StreamChunk(type="stats", content=json.dumps(stats))
 
             except Exception as e:
                 if not thinking_stopped:
@@ -347,6 +538,7 @@ class LLMInterface:
                 func = tc.get("function", {})
                 tool_name = func.get("name", "unknown")
                 tool_args = func.get("arguments", {})
+                tool_call_id = tc.get("id", "")
 
                 # Ensure tool_args is a dict
                 if isinstance(tool_args, str):
@@ -396,10 +588,14 @@ class LLMInterface:
                 )
 
                 # Add tool result to conversation
-                self.messages.append({
+                # HF/OpenAI requires tool_call_id on tool result messages
+                tool_result_msg: dict[str, Any] = {
                     "role": "tool",
                     "content": result,
-                })
+                }
+                if is_hf and tool_call_id:
+                    tool_result_msg["tool_call_id"] = tool_call_id
+                self.messages.append(tool_result_msg)
 
             # Loop back for the model to process tool results
 

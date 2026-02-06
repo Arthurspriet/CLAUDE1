@@ -9,6 +9,7 @@ description = "Local coding assistant powered by Ollama"
 requires-python = ">=3.10"
 dependencies = [
     "click",
+    "huggingface_hub",
     "ollama",
     "prompt_toolkit",
     "rich",

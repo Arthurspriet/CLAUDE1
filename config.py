@@ -31,12 +31,31 @@ MAX_GREP_MATCHES = 100
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 NUM_CTX = 8192
 
+# HuggingFace settings
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "")
+
 # Retry settings
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0
 
+# Timeouts (seconds)
+HF_CLIENT_TIMEOUT = 120  # Overall HTTP timeout for HuggingFace InferenceClient
+HF_STREAM_CHUNK_TIMEOUT = 90  # Max seconds to wait for a single stream chunk
+
 # Context window management
 CONTEXT_WINDOW_RESERVE = 2048
+
+
+def parse_model_spec(model: str) -> tuple[str, str]:
+    """Parse a model spec into (provider, model_id).
+
+    'hf:meta-llama/Meta-Llama-3-8B-Instruct' -> ('huggingface', 'meta-llama/Meta-Llama-3-8B-Instruct')
+    'devstral-small-2:24b'                    -> ('ollama', 'devstral-small-2:24b')
+    """
+    if model.startswith("hf:"):
+        return ("huggingface", model[3:])
+    return ("ollama", model)
 
 
 @dataclass
@@ -52,8 +71,11 @@ class AppConfig:
     compact: bool = False
     verbose: bool = False
     planning: bool = False
+    agents_mode: bool = False
     model_info: dict | None = None
     profile: ModelProfile | None = None
+    provider: str = "ollama"
+    hf_endpoint: str = ""
 
     def __post_init__(self):
         # Ensure data directories exist
@@ -62,5 +84,13 @@ class AppConfig:
 
     @property
     def model_short_name(self) -> str:
-        """Return model name without tag for display."""
-        return self.model.split(":")[0]
+        """Return model name without tag/prefix for display."""
+        name = self.model
+        # Strip hf: prefix
+        if name.startswith("hf:"):
+            name = name[3:]
+        # Strip org/ prefix for HF models (e.g. 'meta-llama/Llama-3-8B' -> 'Llama-3-8B')
+        if "/" in name:
+            name = name.split("/", 1)[1]
+        # Strip Ollama tag
+        return name.split(":")[0]

@@ -98,6 +98,22 @@ def get_latest_session() -> list[dict] | None:
         return None
 
 
+def add_agent_run_message(messages: list[dict], role: str, model: str,
+                          task_id: str, output: str, files_modified: list[str] | None = None) -> None:
+    """Append an agent run record to the message history (backward-compatible)."""
+    messages.append({
+        "role": "assistant",
+        "content": output,
+        "agent_metadata": {
+            "type": "agent_run",
+            "agent_role": role,
+            "model": model,
+            "task_id": task_id,
+            "files_modified": files_modified or [],
+        },
+    })
+
+
 def export_as_markdown(messages: list[dict], filepath: str | None = None) -> str:
     """Export conversation as a markdown file. Returns the file path."""
     if filepath is None:
