@@ -136,11 +136,13 @@ PROFILES: dict[str, ModelProfile] = {
         family="cogito",
         display_name="Cogito",
         supports_tools=True,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
     ),
     "mistral": ModelProfile(
         family="mistral",
         display_name="Mistral",
         supports_tools=True,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
     ),
     "ministral": ModelProfile(
         family="ministral",
@@ -169,6 +171,7 @@ DEFAULT_PROFILE = ModelProfile(
     display_name="Default",
     supports_tools=True,
     num_ctx=4096,
+    behavioral_rules=_TOOL_CALLING_BEHAVIOR,
 )
 
 

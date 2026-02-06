@@ -38,8 +38,11 @@ class GlobSearchTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Search for files matching a glob pattern. Returns matching file paths "
-            "relative to the working directory. Examples: '**/*.py', 'src/**/*.ts', '*.md'"
+            "Search for files matching a glob pattern. Returns relative file paths. "
+            f"Capped at {MAX_GLOB_RESULTS} results. "
+            "Auto-skips: .git, __pycache__, node_modules, .venv, dist, build. "
+            "Examples: '**/*.py' (all Python files), 'src/**/*.ts', 'tests/test_*.py'. "
+            "Prefer this over 'bash find'."
         )
 
     @property
@@ -107,8 +110,11 @@ class GrepSearchTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Search file contents using a regular expression. Returns matching lines with "
-            "file paths and line numbers. Searches recursively from the given directory."
+            "Search file contents using regex. Returns 'file:line: content' for each match. "
+            f"Capped at {MAX_GREP_MATCHES} matches. Skips binary files and files >1MB. "
+            "Use the 'glob' parameter to filter files (e.g., glob='*.py'). "
+            "Use 'context_lines' to show surrounding code. "
+            "Prefer this over 'bash grep' or 'bash rg'."
         )
 
     @property
@@ -277,8 +283,8 @@ class ListDirTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "List the contents of a directory. Shows files and subdirectories with sizes. "
-            "Directories are listed first."
+            "List directory contents (non-recursive). Shows files with sizes and subdirectories. "
+            "Directories listed first. For finding files by pattern, use glob_search instead."
         )
 
     @property

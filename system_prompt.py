@@ -12,6 +12,43 @@ if TYPE_CHECKING:
     from model_profiles import ModelProfile
 
 
+# ── Tiered behavioral rules ─────────────────────────────────────────────────
+
+_FULL_RULES = """
+### Tool Strategy
+- Search the codebase (glob_search, grep_search) before asking the user where things are.
+- Always read_file before edit_file — never guess file contents.
+- Prefer edit_file over write_file for existing files. Use write_file only for new files.
+- Keep tool calls to the minimum needed. Don't re-read a file you just read.
+
+### Editing Discipline
+- Copy old_string exactly from read_file output, including all whitespace and indentation.
+- Include 3-5 lines of surrounding context so old_string matches uniquely.
+- Preserve the existing code style (quotes, indent width, naming conventions).
+- Make surgical changes — only modify what was requested. No drive-by refactors.
+
+### Safety
+- Ask before running destructive commands (rm -rf, git reset --hard, DROP TABLE).
+- Don't introduce security vulnerabilities (injection, XSS, hardcoded secrets).
+- Stay in scope — only modify files the user asked about.
+
+### Error Recovery
+- If a tool call fails, do NOT retry the identical call. Read the error and adjust.
+- When blocked, try an alternative approach (different search, different edit strategy).
+- Investigate unexpected state before overwriting — it may be the user's in-progress work.
+""".strip()
+
+_COMPACT_RULES = """
+1. Search first — use glob_search/grep_search before asking where files are.
+2. Always read_file before edit_file. Never guess content.
+3. Prefer edit_file over write_file. Copy old_string exactly from read output.
+4. Include enough context in old_string to match uniquely.
+5. Only change what was requested. Preserve existing code style.
+6. Ask before destructive commands. Don't add security vulnerabilities.
+7. If a tool fails, read the error and adjust — don't retry identically.
+""".strip()
+
+
 def _get_git_info(working_dir: str) -> str | None:
     """Get git branch and status info if in a git repo."""
     try:
@@ -94,32 +131,26 @@ def build_system_prompt(working_dir: str, model_name: str, compact: bool = False
 
     # Conditionally include tools section based on profile
     supports_tools = profile.supports_tools if profile else True
+    num_ctx = profile.num_ctx if profile else 4096
 
     if supports_tools:
         prompt += """
 
-## Available Tools
+## Tools
 
-You have access to these tools. Use them proactively to help the user:
-
-1. **read_file** - Read file contents with line numbers. Always read a file before editing it.
-2. **write_file** - Create or overwrite a file. Use for new files only. Prefer edit_file for modifications.
-3. **edit_file** - Edit a file by exact string replacement. The old_string must match exactly one location. Always read the file first to get the exact content.
-4. **bash** - Execute a shell command in a shell. Use for running scripts, git, package managers, etc.
-5. **glob_search** - Find files by glob pattern (e.g., '**/*.py').
-6. **grep_search** - Search file contents with regex. Returns matching lines with file paths.
-7. **list_dir** - List directory contents with file sizes.
+You have 7 tools: read_file, write_file, edit_file, bash, glob_search, grep_search, list_dir. Use them proactively.
 
 ## Rules
-
-1. **Read before edit**: Always use read_file before edit_file to see exact content including whitespace.
-2. **Prefer edit over write**: Use edit_file to modify existing files. Only use write_file for new files.
-3. **Be precise with edits**: The old_string in edit_file must match exactly one location, including indentation.
-4. **Explain your actions**: Briefly explain what you're doing and why before using tools.
-5. **Handle errors gracefully**: If a tool call fails, read the error, adjust, and retry.
-6. **Stay in scope**: Only modify files the user asks about. Don't make unnecessary changes.
-7. **Be concise**: Keep responses short and focused. Don't over-explain simple operations.
 """
+        # Select rules tier based on context window size
+        if num_ctx >= 8192:
+            prompt += "\n" + _FULL_RULES + "\n"
+        else:
+            prompt += "\n" + _COMPACT_RULES + "\n"
+
+        # Append per-model behavioral rules
+        if profile and profile.behavioral_rules:
+            prompt += f"\n## Model-Specific Behavior\n\n{profile.behavioral_rules}\n"
     else:
         prompt += """
 

@@ -15,8 +15,13 @@ class BashTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Execute a bash command in a shell. Use for running scripts, git operations, "
-            "installing packages, or any terminal command. The command runs in the working directory."
+            "Execute a bash command in the working directory. "
+            f"Output is truncated at {MAX_TOOL_OUTPUT_CHARS} characters. "
+            f"Default timeout: {DEFAULT_BASH_TIMEOUT}s (override with timeout parameter). "
+            "Use for: running scripts, git, package managers, builds, tests. "
+            "Prefer grep_search over 'bash grep' and glob_search over 'bash find'. "
+            "SAFETY: Do not run destructive commands (rm -rf, git reset --hard) without user approval. "
+            "If a command fails, read stderr and adjust — don't blindly retry."
         )
 
     @property

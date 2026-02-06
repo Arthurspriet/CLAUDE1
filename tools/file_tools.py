@@ -15,8 +15,11 @@ class ReadFileTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Read the contents of a file. Returns the file content with line numbers. "
-            "Use offset and limit to read specific line ranges for large files."
+            "Read file contents with line numbers (format: '  LINE\\tCONTENT'). "
+            f"IMPORTANT: ALWAYS call this before edit_file to see exact content. "
+            f"Truncates at {MAX_FILE_READ_CHARS} chars. "
+            "Use offset (1-based line number) and limit (number of lines) for large files. "
+            "Example: offset=50, limit=20 reads lines 50-69."
         )
 
     @property
@@ -103,8 +106,9 @@ class WriteFileTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Write content to a file. Creates the file and parent directories if they don't exist. "
-            "Overwrites existing content. Prefer edit_file for modifying existing files."
+            "WARNING: Overwrites the ENTIRE file. Creates parent directories if needed. "
+            "Use ONLY for brand-new files. For modifying existing files, use edit_file instead. "
+            "If you use this on an existing file, all previous content is lost."
         )
 
     @property
@@ -160,9 +164,12 @@ class EditFileTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Edit a file by replacing an exact string match. The old_string must match exactly one "
-            "location in the file (including whitespace and indentation). Use read_file first to see "
-            "the current content. If old_string is empty, content is inserted at the beginning of the file."
+            "Edit a file by replacing an exact string match. Critical rules: "
+            "(1) ALWAYS read_file first — never guess content. "
+            "(2) old_string must match EXACTLY, including whitespace and indentation. "
+            "(3) Include 3-5 lines of context so old_string matches uniquely. "
+            "(4) If old_string is empty, new_string is inserted at the beginning. "
+            "(5) On error, the tool shows partial matches — use them to fix old_string."
         )
 
     @property
