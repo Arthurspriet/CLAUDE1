@@ -64,6 +64,19 @@ def show_help():
     table.add_row("/plan", "Toggle planning mode (reflect before tools)")
     table.add_row("/undo", "Undo last file edit/write")
     table.add_row("/export [file]", "Export conversation as markdown")
+    table.add_row("/doctor", "Run health checks")
+    table.add_row("/debug", "Show session debug info")
+    table.add_row("/context", "Visualize context window usage")
+    table.add_row("/stats (/cost)", "Show detailed token stats")
+    table.add_row("/copy", "Copy last response to clipboard")
+    table.add_row("/rewind [N]", "Rewind conversation by N user turns")
+    table.add_row("/memory [cmd]", "Manage CLAUDE.md (show/add/edit/global/reset)")
+    table.add_row("/init", "Initialize project CLAUDE.md")
+    table.add_row("/skills [cmd]", "Manage skills (list/create/edit/reload/info)")
+    table.add_row("/tasks", "List spawned subtasks")
+    table.add_row("/agents", "Toggle multi-agent mode")
+    table.add_row("/agents config", "Show agent role -> model mappings")
+    table.add_row("/agents set <role> <model>", "Change model for an agent role")
     table.add_row("/exit", "Exit Claude1")
     table.add_row("", "")
     table.add_row("[bold]Shortcuts[/bold]", "")
@@ -308,4 +321,320 @@ def show_models(models: list[str], current: str):
     for m in models:
         marker = " [cyan]<-- current[/cyan]" if m == current else ""
         console.print(f"  {m}{marker}")
+    console.print()
+
+
+# ── New rendering functions ──────────────────────────────────────────────────
+
+
+def show_doctor_results(results):
+    """Display health check results."""
+    table = Table(title="Health Checks", border_style="dim")
+    table.add_column("Status", width=4, justify="center")
+    table.add_column("Check", style="bold")
+    table.add_column("Result")
+    table.add_column("Details", style="dim")
+
+    passed = 0
+    total = len(results)
+
+    for r in results:
+        icon = "[green]OK[/green]" if r.passed else "[red]FAIL[/red]"
+        if r.passed:
+            passed += 1
+        table.add_row(icon, r.name, r.message, r.details or "")
+
+    console.print(table)
+    color = "green" if passed == total else "yellow" if passed >= total - 2 else "red"
+    console.print(f"[{color}]{passed}/{total} checks passed[/{color}]")
+    console.print()
+
+
+def show_debug_info(data: dict):
+    """Display session debug information."""
+    # Model info
+    model_text = Text()
+    model_text.append(f"Model: {data.get('model', 'unknown')}\n")
+    model_text.append(f"Working dir: {data.get('working_dir', 'unknown')}\n")
+    model_text.append(f"Auto-accept: {data.get('auto_accept', False)}\n")
+    model_text.append(f"Compact: {data.get('compact', False)}\n")
+    model_text.append(f"Planning: {data.get('planning', False)}\n")
+    model_text.append(f"Temperature: {data.get('temperature', 'default')}\n")
+    console.print(Panel(model_text, title="[bold]Config[/bold]", border_style="blue"))
+
+    # Conversation stats
+    conv_text = Text()
+    conv_text.append(f"Messages: {data.get('message_count', 0)}\n")
+    roles = data.get('role_breakdown', {})
+    for role, count in roles.items():
+        conv_text.append(f"  {role}: {count}\n")
+    conv_text.append(f"Estimated tokens: {data.get('estimated_tokens', 0)}\n")
+    console.print(Panel(conv_text, title="[bold]Conversation[/bold]", border_style="blue"))
+
+    # Recent tool calls
+    tool_history = data.get('tool_history', [])
+    if tool_history:
+        tools_text = Text()
+        for entry in tool_history[-10:]:
+            tools_text.append(f"  {entry}\n")
+        console.print(Panel(tools_text, title="[bold]Recent Tool Calls[/bold]", border_style="blue"))
+
+    console.print()
+
+
+def show_context_usage(usage: dict):
+    """Display context window usage visualization."""
+    estimated = usage.get("estimated_tokens", 0)
+    num_ctx = usage.get("num_ctx", 0)
+    usable = usage.get("usable", 0)
+    reserve = usage.get("reserve", 0)
+    pct = usage.get("usage_pct", 0)
+    msg_count = usage.get("message_count", 0)
+
+    # Summary
+    console.print(f"[bold]Context Window:[/bold] {estimated} / {usable} tokens ({pct:.1f}% used)")
+    console.print(f"[dim]Total: {num_ctx} | Reserve: {reserve} | Messages: {msg_count}[/dim]")
+
+    # Colored bar
+    bar_width = 50
+    filled = int(bar_width * min(pct, 100) / 100)
+    empty = bar_width - filled
+
+    if pct < 60:
+        color = "green"
+    elif pct < 85:
+        color = "yellow"
+    else:
+        color = "red"
+
+    bar = Text()
+    bar.append("[")
+    bar.append("=" * filled, style=color)
+    bar.append(" " * empty)
+    bar.append(f"] {pct:.0f}%")
+    console.print(bar)
+
+    # Role breakdown
+    roles = usage.get("role_breakdown", {})
+    if roles:
+        table = Table(border_style="dim", show_header=True)
+        table.add_column("Role", style="bold")
+        table.add_column("Est. Tokens", justify="right")
+        for role, tokens in sorted(roles.items()):
+            table.add_row(role, str(tokens))
+        console.print(table)
+
+    console.print()
+
+
+def show_session_stats(stats):
+    """Display detailed session statistics."""
+    # Session summary
+    table = Table(title="Session Summary", border_style="dim")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value", justify="right")
+    table.add_row("Total requests", str(stats.total_requests))
+    table.add_row("Prompt tokens", f"{stats.total_prompt_tokens:,}")
+    table.add_row("Completion tokens", f"{stats.total_completion_tokens:,}")
+    table.add_row("Total tokens", f"{stats.total_tokens:,}")
+    table.add_row("Est. API cost saved", f"${stats.estimated_cost:.4f}")
+    console.print(table)
+
+    # Per-turn table
+    if stats.turns:
+        turn_table = Table(title="Per-Turn Stats", border_style="dim")
+        turn_table.add_column("#", justify="right", style="dim")
+        turn_table.add_column("Prompt", justify="right")
+        turn_table.add_column("Completion", justify="right")
+        turn_table.add_column("Speed", justify="right")
+
+        for i, turn in enumerate(stats.turns, 1):
+            speed = f"{turn.tokens_per_second:.1f} tok/s" if turn.tokens_per_second > 0 else "-"
+            turn_table.add_row(
+                str(i),
+                f"{turn.prompt_tokens:,}",
+                f"{turn.completion_tokens:,}",
+                speed,
+            )
+
+        console.print(turn_table)
+
+        # Unicode bar chart of completion tokens
+        if len(stats.turns) > 1:
+            max_comp = max(t.completion_tokens for t in stats.turns) or 1
+            console.print("[bold]Completion tokens per turn:[/bold]")
+            for i, turn in enumerate(stats.turns, 1):
+                bar_len = int(30 * turn.completion_tokens / max_comp)
+                bar = "#" * bar_len
+                console.print(f"  [dim]{i:>3}[/dim] [cyan]{bar}[/cyan] {turn.completion_tokens}")
+
+    console.print()
+
+
+def show_rewind_options(turns: list[tuple[int, str]]):
+    """Show numbered list of user turns for rewind selection."""
+    console.print("[bold]User turns (most recent first):[/bold]")
+    for num, preview in turns:
+        console.print(f"  [cyan]{num}[/cyan]. {preview}")
+    console.print("[dim]Use /rewind N to rewind to after turn N[/dim]")
+    console.print()
+
+
+def show_skills(skills):
+    """Display list of available skills."""
+    if not skills:
+        console.print("[dim]No skills found. Use /skills create <name> to create one.[/dim]")
+        console.print()
+        return
+
+    table = Table(title="Available Skills", border_style="dim")
+    table.add_column("Command", style="bold cyan")
+    table.add_column("Description")
+    table.add_column("Location", style="dim")
+
+    for skill in skills:
+        table.add_row(f"/{skill.name}", skill.description, str(skill.path))
+
+    console.print(table)
+    console.print()
+
+
+def show_skill_activated(name: str, description: str):
+    """Show panel when a skill is activated."""
+    console.print(
+        Panel(
+            f"{description}",
+            title=f"[bold green]Skill: {name}[/bold green]",
+            border_style="green",
+            padding=(0, 1),
+        )
+    )
+
+
+def show_skill_created(name: str, path):
+    """Show confirmation after skill creation."""
+    console.print(f"[green]Skill created:[/green] [bold]{name}[/bold]")
+    console.print(f"[dim]File: {path}[/dim]")
+    console.print()
+
+
+def show_skill_info(skill):
+    """Show detailed info about a skill."""
+    text = Text()
+    text.append(f"Name: {skill.name}\n", style="bold")
+    text.append(f"Description: {skill.description}\n")
+    text.append(f"Path: {skill.path}\n", style="dim")
+    if skill.allowed_tools:
+        text.append(f"Allowed tools: {', '.join(skill.allowed_tools)}\n")
+    else:
+        text.append("Allowed tools: all\n")
+    text.append(f"\nBody preview:\n", style="bold")
+    preview = skill.body[:500]
+    if len(skill.body) > 500:
+        preview += f"\n... [{len(skill.body)} chars total]"
+    text.append(preview, style="dim")
+    console.print(Panel(text, title=f"[bold]Skill: {skill.name}[/bold]", border_style="cyan"))
+    console.print()
+
+
+def show_tasks(tasks):
+    """Display list of spawned subtasks."""
+    if not tasks:
+        console.print("[dim]No subtasks have been spawned yet.[/dim]")
+        console.print()
+        return
+
+    table = Table(title="Subtasks", border_style="dim")
+    table.add_column("ID", justify="right", style="bold")
+    table.add_column("Description")
+    table.add_column("Status")
+    table.add_column("Duration", justify="right")
+    table.add_column("Result Preview", style="dim", max_width=40)
+
+    for task in tasks:
+        # Status color
+        if task.status == "completed":
+            status = "[green]completed[/green]"
+        elif task.status == "failed":
+            status = "[red]failed[/red]"
+        else:
+            status = "[yellow]running[/yellow]"
+
+        # Duration
+        if task.completed_at > 0:
+            duration = f"{task.completed_at - task.started_at:.1f}s"
+        else:
+            import time
+            duration = f"{time.time() - task.started_at:.1f}s (running)"
+
+        # Result preview
+        preview = task.result[:80].replace("\n", " ") if task.result else "-"
+
+        table.add_row(str(task.id), task.description, status, duration, preview)
+
+    console.print(table)
+    console.print()
+
+
+# ── Agent mode rendering ───────────────────────────────────────────────────
+
+
+def show_agent_plan(summary: str, tasks: list) -> None:
+    """Display the agent decomposition plan."""
+    lines = [f"[bold]{summary}[/bold]\n"]
+    for i, task in enumerate(tasks, 1):
+        role = task.role.value if hasattr(task.role, "value") else task.role
+        deps = f" (after: {', '.join(task.depends_on)})" if task.depends_on else ""
+        lines.append(f"  {i}. [{role}] {task.instruction}{deps}")
+
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold blue]Agent Plan[/bold blue]",
+            border_style="blue",
+            padding=(0, 1),
+        )
+    )
+
+
+def show_agent_progress(task_id: str, role: str, model: str, status: str) -> None:
+    """Display a status update for an agent task."""
+    status_styles = {
+        "running": "[yellow]running[/yellow]",
+        "completed": "[green]completed[/green]",
+        "failed": "[red]failed[/red]",
+    }
+    styled = status_styles.get(status, status)
+    console.print(f"  [{task_id}] {role} ({model}): {styled}")
+
+
+def render_agent_result(output: str) -> None:
+    """Render the final synthesized agent output as markdown."""
+    if output.strip():
+        console.print(
+            Panel(
+                Markdown(output.strip()),
+                title="[bold green]Agent Result[/bold green]",
+                border_style="green",
+                padding=(0, 1),
+            )
+        )
+
+
+def show_agent_config(configs: dict) -> None:
+    """Display the current agent role -> model mappings."""
+    table = Table(title="Agent Configuration", border_style="dim")
+    table.add_column("Role", style="bold cyan", no_wrap=True)
+    table.add_column("Model", style="green")
+    table.add_column("Tools", style="dim")
+    table.add_column("Max Iter", style="dim", justify="right")
+
+    for role_name, config in configs.items():
+        tool_count = len(config.tool_names) if config.tool_names else 0
+        tool_label = f"{tool_count} tools" if tool_count else "none"
+        if config.read_only and tool_count:
+            tool_label += " (read-only)"
+        table.add_row(role_name, config.model, tool_label, str(config.max_iterations))
+
+    console.print(table)
     console.print()

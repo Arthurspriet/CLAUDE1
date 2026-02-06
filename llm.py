@@ -37,6 +37,7 @@ class LLMInterface:
         self.messages: list[dict[str, Any]] = []
         self._cancelled = False
         self._last_prompt_eval_count: int | None = None
+        self.active_tool_filter: list[str] | None = None
 
         # Initialize system prompt
         self._set_system_prompt()
@@ -66,6 +67,39 @@ class LLMInterface:
     def cancel(self):
         """Signal cancellation of current generation."""
         self._cancelled = True
+
+    def set_tool_filter(self, tools: list[str] | None):
+        """Restrict available tools to only the named ones."""
+        self.active_tool_filter = tools
+
+    def clear_tool_filter(self):
+        """Restore full tool set."""
+        self.active_tool_filter = None
+
+    def get_context_usage(self) -> dict:
+        """Return context window usage information."""
+        estimated = self._estimate_tokens()
+        num_ctx = self.config.num_ctx
+        reserve = CONTEXT_WINDOW_RESERVE
+        usable = num_ctx - reserve
+
+        # Per-role breakdown
+        role_counts: dict[str, int] = {}
+        for msg in self.messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            tokens = len(content) // 4 if isinstance(content, str) else 0
+            role_counts[role] = role_counts.get(role, 0) + tokens
+
+        return {
+            "estimated_tokens": estimated,
+            "num_ctx": num_ctx,
+            "reserve": reserve,
+            "usable": usable,
+            "message_count": len(self.messages),
+            "role_breakdown": role_counts,
+            "usage_pct": (estimated / usable * 100) if usable > 0 else 0,
+        }
 
     def _estimate_tokens(self) -> int:
         """Estimate token count for current messages."""
@@ -165,6 +199,10 @@ class LLMInterface:
             tool_defs = []
         else:
             tool_defs = self.tools.ollama_tool_definitions()
+            # Apply tool filter if active (e.g. during skill execution)
+            if self.active_tool_filter is not None:
+                allowed = set(self.active_tool_filter)
+                tool_defs = [t for t in tool_defs if t.get("function", {}).get("name") in allowed]
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             if self._cancelled:

@@ -138,7 +138,7 @@ def build_system_prompt(working_dir: str, model_name: str, compact: bool = False
 
 ## Tools
 
-You have 7 tools: read_file, write_file, edit_file, bash, glob_search, grep_search, list_dir. Use them proactively.
+You have 8 tools: read_file, write_file, edit_file, bash, glob_search, grep_search, list_dir, task. Use them proactively. Use the task tool to spawn isolated sub-conversations for focused work.
 
 ## Rules
 """
