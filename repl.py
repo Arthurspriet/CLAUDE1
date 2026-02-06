@@ -182,6 +182,13 @@ class REPL:
             renderer.show_info(f"Compact mode: {state}")
             return True
 
+        elif cmd == "/plan":
+            self.config.planning = not self.config.planning
+            state = "ON" if self.config.planning else "OFF"
+            renderer.show_info(f"Planning mode: {state}")
+            self.llm._set_system_prompt()
+            return True
+
         elif cmd == "/undo":
             result = self.tool_registry.undo_stack.undo_last()
             renderer.show_info(result)
@@ -233,6 +240,13 @@ class REPL:
                         live.start()
                     else:
                         live.update(Markdown(text_buffer))
+
+                elif chunk.type == "plan":
+                    if live is not None:
+                        live.stop()
+                        live = None
+                        text_buffer = ""
+                    renderer.show_plan(chunk.content)
 
                 elif chunk.type == "tool_call":
                     # Stop live display before showing tool panel

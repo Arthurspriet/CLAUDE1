@@ -51,6 +51,7 @@ class AppConfig:
     temperature: float | None = None
     compact: bool = False
     verbose: bool = False
+    planning: bool = False
     model_info: dict | None = None
     profile: ModelProfile | None = None
 

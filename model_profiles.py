@@ -37,6 +37,34 @@ _SMALL_MODEL_RULES = """
 - If a task is too complex, say so and suggest breaking it down.
 """.strip()
 
+_PLANNING_RULES = """
+- Before executing tools, briefly state your plan:
+  1. What you are trying to accomplish
+  2. Which tools you will use and why
+  3. Any risks or edge cases to watch for
+- Keep the plan to 2-4 sentences. Be concrete, not generic.
+""".strip()
+
+
+# ── Behavioral guidance constants ─────────────────────────────────────────────
+
+_TOOL_CALLING_BEHAVIOR = """
+- Call one tool at a time and wait for its result before deciding the next action.
+- Never assume file contents — always read before editing.
+- If a tool call fails, explain the error briefly, then adjust your approach and retry.
+""".strip()
+
+_WEAK_TOOL_CALLING_BEHAVIOR = """
+- Call one tool at a time. Wait for the result.
+- ALWAYS use read_file before edit_file. No exceptions.
+- Copy old_string exactly from read_file output, including all whitespace.
+- If edit_file fails, re-read the file and retry with corrected old_string.
+""".strip()
+
+_NO_OVER_GENERATION = """
+- Stop after answering the user's question. Do not add unsolicited suggestions or follow-up ideas.
+""".strip()
+
 
 # ── ModelProfile dataclass ───────────────────────────────────────────────────
 
@@ -52,6 +80,7 @@ class ModelProfile:
     top_p: float | None = None
     top_k: int | None = None
     repeat_penalty: float | None = None
+    behavioral_rules: str = ""
     system_prompt_suffix: str = _STANDARD_FORMAT_RULES
 
 
@@ -63,6 +92,7 @@ PROFILES: dict[str, ModelProfile] = {
         display_name="Devstral",
         supports_tools=True,
         num_ctx=8192,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR,
     ),
     "qwen3": ModelProfile(
         family="qwen3",
@@ -71,6 +101,7 @@ PROFILES: dict[str, ModelProfile] = {
         temperature=0.7,
         top_p=0.8,
         repeat_penalty=1.05,
+        behavioral_rules=_TOOL_CALLING_BEHAVIOR + "\n" + _NO_OVER_GENERATION,
         system_prompt_suffix=_STANDARD_FORMAT_RULES + "\n" + _QWEN_THINKING_RULES,
     ),
     "gemma3": ModelProfile(
@@ -85,6 +116,7 @@ PROFILES: dict[str, ModelProfile] = {
         display_name="Llama 3.2",
         supports_tools=True,
         num_ctx=4096,
+        behavioral_rules=_WEAK_TOOL_CALLING_BEHAVIOR,
     ),
     "llama3.2:1b": ModelProfile(
         family="llama3.2:1b",

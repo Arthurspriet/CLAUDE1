@@ -61,6 +61,7 @@ def show_help():
     table.add_row("/temp [value]", "Get/set temperature (0.0-2.0)")
     table.add_row("/profile", "Show current model profile settings")
     table.add_row("/compact", "Toggle compact mode (terse responses)")
+    table.add_row("/plan", "Toggle planning mode (reflect before tools)")
     table.add_row("/undo", "Undo last file edit/write")
     table.add_row("/export [file]", "Export conversation as markdown")
     table.add_row("/exit", "Exit Claude1")
@@ -73,6 +74,18 @@ def show_help():
     table.add_row("Ctrl+R", "Search command history")
     console.print(table)
     console.print()
+
+
+def show_plan(plan_text: str):
+    """Display the planning step panel."""
+    console.print(
+        Panel(
+            Markdown(plan_text),
+            title="[bold magenta]Plan[/bold magenta]",
+            border_style="magenta",
+            padding=(0, 1),
+        )
+    )
 
 
 def show_tool_call(tool_name: str, tool_args: dict):

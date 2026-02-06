@@ -46,6 +46,7 @@ class LLMInterface:
         prompt = build_system_prompt(
             self.config.working_dir, self.config.model,
             compact=self.config.compact, profile=self.config.profile,
+            planning=self.config.planning,
         )
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0] = {"role": "system", "content": prompt}
@@ -107,6 +108,48 @@ class LLMInterface:
         summary_msg = {"role": "user", "content": summary}
 
         self.messages = [system, summary_msg] + tail
+
+    def _build_plan_prompt(self, tool_calls: list[dict]) -> str:
+        """Construct a prompt asking the model to explain its plan for the pending tool calls."""
+        lines = ["You are about to execute these tools:"]
+        for i, tc in enumerate(tool_calls, 1):
+            func = tc.get("function", {})
+            name = func.get("name", "unknown")
+            args = func.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {"raw": args}
+            # Build a concise argument summary
+            arg_parts = []
+            for k, v in args.items():
+                val = str(v)
+                if len(val) > 60:
+                    val = val[:60] + "..."
+                arg_parts.append(f'{k}="{val}"')
+            arg_str = ", ".join(arg_parts)
+            lines.append(f"  {i}. {name}({arg_str})")
+        lines.append("")
+        lines.append("Briefly explain your plan: what are you trying to accomplish, why these tools in this order, and any risks.")
+        return "\n".join(lines)
+
+    def _run_planning_call(self, plan_prompt: str) -> str | None:
+        """Make a non-streaming API call to get the model's plan. Returns plan text or None."""
+        # Build a temporary message list: current history + plan prompt as user message
+        plan_messages = list(self.messages) + [{"role": "user", "content": plan_prompt}]
+
+        try:
+            response = ollama.chat(
+                model=self.config.model,
+                messages=plan_messages,
+                stream=False,
+                options={"num_ctx": self.config.num_ctx},
+            )
+            content = response.get("message", {}).get("content", "") if isinstance(response, dict) else getattr(getattr(response, "message", None), "content", "")
+            return content.strip() if content and content.strip() else None
+        except Exception:
+            return None
 
     def send_message(self, user_input: str) -> Iterator[StreamChunk]:
         """Send a user message and yield streaming chunks through the agentic loop."""
@@ -249,6 +292,13 @@ class LLMInterface:
             if not tool_calls:
                 yield StreamChunk(type="done")
                 return
+
+            # Planning step: ask the model to explain its plan before executing tools
+            if self.config.planning:
+                plan_prompt = self._build_plan_prompt(tool_calls)
+                plan_text = self._run_planning_call(plan_prompt)
+                if plan_text:
+                    yield StreamChunk(type="plan", content=plan_text)
 
             # Execute tool calls
             for tc in tool_calls:

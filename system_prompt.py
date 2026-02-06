@@ -79,7 +79,8 @@ def _load_claude_md(working_dir: str) -> str | None:
 
 
 def build_system_prompt(working_dir: str, model_name: str, compact: bool = False,
-                        profile: ModelProfile | None = None) -> str:
+                        profile: ModelProfile | None = None,
+                        planning: bool = False) -> str:
     prompt = f"""You are Claude1, a local coding assistant running in the terminal. You help users with software engineering tasks by reading, writing, and editing files, running commands, and searching codebases.
 
 ## Environment
@@ -128,6 +129,11 @@ You are running in text-only mode — you do NOT have access to any tools.
 Provide code for the user to copy and run manually.
 When showing file changes, use clear before/after code blocks with full file paths.
 """
+
+    # Append planning rules if enabled and tools are available
+    if planning and supports_tools:
+        from model_profiles import _PLANNING_RULES
+        prompt += f"\n## Planning Mode\n\n{_PLANNING_RULES}\n"
 
     # Append profile format rules
     if profile and profile.system_prompt_suffix:
