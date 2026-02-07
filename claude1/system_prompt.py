@@ -179,6 +179,47 @@ All source modifications are git-backed and reversible."""
         return None
 
 
+def _get_financial_section() -> str | None:
+    """Generate financial awareness section if wallet is configured."""
+    from claude1.config import SOLANA_PRIVATE_KEY, SOLANA_WALLET_ADDRESS
+    if not SOLANA_PRIVATE_KEY and not SOLANA_WALLET_ADDRESS:
+        return None
+
+    mode = "full (can sign transactions)" if SOLANA_PRIVATE_KEY else "read-only (can view balances only)"
+    return f"""## Financial Tools (Solana / Jupiter DEX)
+
+You have access to Solana financial tools via Jupiter, the leading Solana DEX aggregator.
+Wallet mode: {mode}
+Wallet address: {SOLANA_WALLET_ADDRESS or '(derived from private key)'}
+
+### Key concepts
+- **SOL** is the native Solana token. 1 SOL = 1,000,000,000 lamports (9 decimals).
+- **USDC** and **USDT** are stablecoins pegged to $1 (6 decimals each).
+- Token amounts from APIs are often in the smallest unit (lamports). Convert to human-readable.
+- You can use aliases: "sol", "usdc", "usdt" — or raw mint addresses.
+
+### Safety rules
+- **NEVER** reveal, log, or include the private key in any output.
+- **ALWAYS** show the user swap details (amounts, price impact, slippage) before confirming.
+- **ALWAYS** use token_shield to check unfamiliar tokens before large trades.
+- **ALWAYS** suggest checking wallet_balance after a transaction to verify.
+- For send_tokens: double-check the recipient address with the user — transfers are irreversible.
+
+### Available tools
+**Read-only** (no confirmation needed): wallet_balance, token_price, token_search, token_shield, list_limit_orders, list_dca_orders, portfolio_positions
+**Transactions** (require confirmation): swap_tokens, create_limit_order, cancel_limit_order, create_dca_order, cancel_dca_order, lend_deposit, send_tokens
+
+### When to use each tool
+- User asks "what's in my wallet?" → wallet_balance
+- User asks "how much is SOL?" → token_price
+- User asks "buy 0.1 SOL with USDC" → swap_tokens (input=usdc, output=sol)
+- User asks "set a limit order" → create_limit_order
+- User asks "DCA into SOL" → create_dca_order
+- User asks "earn yield on USDC" → lend_deposit
+- User asks "send 5 USDC to <address>" → send_tokens
+- User asks "is this token safe?" → token_shield"""
+
+
 def build_system_prompt(working_dir: str, model_name: str, compact: bool = False,
                         profile: ModelProfile | None = None,
                         planning: bool = False,
@@ -251,6 +292,11 @@ When showing file changes, use clear before/after code blocks with full file pat
     self_awareness = _get_self_awareness_section()
     if self_awareness:
         prompt += f"\n{self_awareness}\n"
+
+    # Add financial awareness section
+    financial = _get_financial_section()
+    if financial:
+        prompt += f"\n{financial}\n"
 
     # Add CLAUDE.md content
     claude_md = _load_claude_md(working_dir)

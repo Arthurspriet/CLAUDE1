@@ -28,7 +28,8 @@ dependencies = [
 [project.optional-dependencies]
 web = ["httpx>=0.27.0", "beautifulsoup4>=4.12.0"]
 mcp = ["mcp>=1.0.0"]
-all = ["httpx>=0.27.0", "beautifulsoup4>=4.12.0", "mcp>=1.0.0"]
+solana = ["solders>=0.21.0", "base58>=2.1.0", "httpx>=0.27.0"]
+all = ["httpx>=0.27.0", "beautifulsoup4>=4.12.0", "mcp>=1.0.0", "solders>=0.21.0", "base58>=2.1.0"]
 
 [project.scripts]
 claude1 = "claude1.cli:cli"

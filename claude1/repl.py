@@ -15,7 +15,11 @@ from claude1.config import AppConfig, DATA_DIR, parse_model_spec
 from claude1.doctor import run_health_checks
 from claude1.model_profiles import get_profile, format_profile_info
 from claude1.llm import LLMInterface
-from claude1.session import save_session, load_session, list_sessions, auto_save_session, get_latest_session, export_as_markdown
+from claude1.session import (
+    save_session, load_session, list_sessions, auto_save_session,
+    get_latest_session, export_as_markdown,
+    save_checkpoint, load_checkpoint, list_checkpoints, delete_checkpoint,
+)
 from claude1.skills import SkillRegistry
 from claude1.stats import SessionStats
 from claude1.task_engine import TaskEngine, TaskTimeManager
@@ -246,6 +250,76 @@ class REPL:
         elif cmd == "/undo":
             result = self.tool_registry.undo_stack.undo_last()
             renderer.show_info(result)
+            return True
+
+        elif cmd == "/undo-bash":
+            if arg.strip().lower() == "list":
+                snapshots = self.tool_registry.bash_undo.list_snapshots()
+                if not snapshots:
+                    renderer.show_info("No bash snapshots available.")
+                else:
+                    renderer.show_info(f"Bash undo snapshots ({len(snapshots)}):")
+                    for s in snapshots:
+                        renderer.show_info(f"  [{s['ref']}] {s['command']}")
+            else:
+                result = self.tool_registry.bash_undo.undo_last()
+                renderer.show_info(result)
+            return True
+
+        elif cmd == "/checkpoint":
+            if not arg:
+                # List checkpoints
+                cps = list_checkpoints()
+                if not cps:
+                    renderer.show_info("No checkpoints saved. Usage: /checkpoint <name>")
+                else:
+                    renderer.show_info(f"Checkpoints ({len(cps)}):")
+                    for cp in cps:
+                        renderer.show_info(f"  {cp['name']}  ({cp['messages']} msgs, {cp['checkpoint_at']})")
+                return True
+
+            subcmd_parts = arg.strip().split(maxsplit=1)
+            subcmd_name = subcmd_parts[0].lower()
+
+            if subcmd_name == "delete" and len(subcmd_parts) > 1:
+                cp_name = subcmd_parts[1].strip()
+                if delete_checkpoint(cp_name):
+                    renderer.show_info(f"Checkpoint '{cp_name}' deleted.")
+                else:
+                    renderer.show_error(f"Checkpoint '{cp_name}' not found.")
+                return True
+
+            # Save checkpoint
+            path = save_checkpoint(self.llm.messages, arg.strip())
+            renderer.show_info(f"Checkpoint saved: {arg.strip()} ({len(self.llm.messages)} messages)")
+            return True
+
+        elif cmd == "/branch":
+            if not arg:
+                renderer.show_info("Usage: /branch <checkpoint_name>")
+                renderer.show_info("Forks conversation from a checkpoint (non-destructive).")
+                cps = list_checkpoints()
+                if cps:
+                    renderer.show_info(f"\nAvailable checkpoints:")
+                    for cp in cps:
+                        renderer.show_info(f"  {cp['name']}  ({cp['messages']} msgs)")
+                return True
+
+            # Auto-save current state before branching
+            try:
+                auto_save_session(self.llm.messages)
+            except Exception:
+                pass
+
+            messages = load_checkpoint(arg.strip())
+            if messages is None:
+                renderer.show_error(f"Checkpoint '{arg.strip()}' not found.")
+            else:
+                self.llm.messages = messages
+                renderer.show_info(
+                    f"Branched from checkpoint '{arg.strip()}' ({len(messages)} messages). "
+                    f"Previous state auto-saved."
+                )
             return True
 
         elif cmd == "/export":

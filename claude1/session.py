@@ -114,6 +114,77 @@ def add_agent_run_message(messages: list[dict], role: str, model: str,
     })
 
 
+CHECKPOINTS_DIR = SESSIONS_DIR / "checkpoints"
+
+
+def save_checkpoint(messages: list[dict], name: str) -> str:
+    """Save a named checkpoint of the conversation state. Returns the file path."""
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    safe_name = "".join(c for c in name if c.isalnum() or c in "-_").strip()
+    if not safe_name:
+        safe_name = datetime.now().strftime("cp_%Y%m%d_%H%M%S")
+
+    filepath = CHECKPOINTS_DIR / f"{safe_name}.json"
+
+    data = {
+        "name": name,
+        "checkpoint_at": datetime.now().isoformat(),
+        "message_count": len(messages),
+        "messages": messages,
+    }
+
+    filepath.write_text(json.dumps(data, indent=2))
+    return str(filepath)
+
+
+def load_checkpoint(name: str) -> list[dict] | None:
+    """Load a checkpoint by name. Returns messages or None."""
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    filepath = CHECKPOINTS_DIR / f"{name}.json"
+    if not filepath.exists():
+        matches = list(CHECKPOINTS_DIR.glob(f"{name}*"))
+        if matches:
+            filepath = matches[0]
+        else:
+            return None
+
+    try:
+        data = json.loads(filepath.read_text())
+        return data.get("messages", [])
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def list_checkpoints() -> list[dict]:
+    """List all saved checkpoints with metadata."""
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    checkpoints = []
+
+    for f in sorted(CHECKPOINTS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(f.read_text())
+            checkpoints.append({
+                "name": f.stem,
+                "checkpoint_at": data.get("checkpoint_at", "unknown"),
+                "messages": data.get("message_count", len(data.get("messages", []))),
+            })
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    return checkpoints
+
+
+def delete_checkpoint(name: str) -> bool:
+    """Delete a checkpoint by name. Returns True if deleted."""
+    filepath = CHECKPOINTS_DIR / f"{name}.json"
+    if filepath.exists():
+        filepath.unlink()
+        return True
+    return False
+
+
 def export_as_markdown(messages: list[dict], filepath: str | None = None) -> str:
     """Export conversation as a markdown file. Returns the file path."""
     if filepath is None:

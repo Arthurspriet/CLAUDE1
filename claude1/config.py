@@ -94,6 +94,19 @@ NUM_CTX = 8192
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "")
 
+# Solana / Jupiter settings
+SOLANA_PRIVATE_KEY = os.environ.get("SOLANA_PRIVATE_KEY", "")
+SOLANA_WALLET_ADDRESS = os.environ.get("SOLANA_WALLET_ADDRESS", "")
+JUP_API_KEY = os.environ.get("JUP_API_KEY", "")
+JUP_BASE_URL = "https://api.jup.ag"
+JUP_HTTP_TIMEOUT = 30
+
+# Well-known token mints
+SOL_MINT = "So11111111111111111111111111111111111111112"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+TOKEN_ALIASES: dict[str, str] = {"sol": SOL_MINT, "usdc": USDC_MINT, "usdt": USDT_MINT}
+
 # Retry settings
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 1.0

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff
+      - name: Ruff lint
+        run: ruff check claude1/ tests/
+      - name: Ruff format check
+        run: ruff format --check claude1/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install mypy
+      - run: pip install -e ".[all]" || pip install -e .
+      - name: mypy
+        run: mypy claude1/ --ignore-missing-imports --no-error-summary || true
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[all]" || pip install -e .
+      - run: pip install pytest
+      - name: Run tests
+        run: pytest tests/ -v --tb=short
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[all]" || pip install -e .
+      - name: Smoke import test
+        run: |
+          python -c "from claude1.config import AppConfig; print('config OK')"
+          python -c "from claude1.tools import ToolRegistry; print('tools OK')"
+          python -c "from claude1.llm import LLMInterface; print('llm OK')"
+          python -c "from claude1.session import save_session, load_session; print('session OK')"
+          python -c "from claude1.undo import UndoStack; print('undo OK')"
+          python -c "from claude1.json_repair import repair_json; print('json_repair OK')"
+          python -c "from claude1.stats import SessionStats; print('stats OK')"

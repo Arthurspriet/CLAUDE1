@@ -11,6 +11,7 @@ from claude1.config import (
     WARNED_BASH_PATTERNS,
 )
 from claude1.tools.base import BaseTool
+from claude1.undo import BashUndoManager
 
 
 class CommandSafety:
@@ -40,6 +41,10 @@ class CommandSafety:
 
 
 class BashTool(BaseTool):
+    def __init__(self, working_dir: str, bash_undo: BashUndoManager | None = None, **kwargs: Any):
+        super().__init__(working_dir, **kwargs)
+        self.bash_undo = bash_undo
+
     @property
     def name(self) -> str:
         return "bash"
@@ -96,6 +101,10 @@ class BashTool(BaseTool):
         # (the _warn_level attribute is checked by the REPL's confirm callback)
         self._last_safety_level = level
         self._last_safety_reason = reason
+
+        # ── Bash undo: capture snapshot before warned (destructive) commands ──
+        if level == CommandSafety.WARNED and self.bash_undo is not None:
+            self.bash_undo.capture(command, str(self.working_dir))
 
         try:
             result = subprocess.run(

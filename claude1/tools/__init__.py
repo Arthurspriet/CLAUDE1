@@ -9,7 +9,7 @@ from claude1.tools.bash_tool import BashTool
 from claude1.tools.file_tools import EditFileTool, ReadFileTool, WriteFileTool
 from claude1.tools.search_tools import GlobSearchTool, GrepSearchTool, ListDirTool
 from claude1.tools.task_tool import TaskTool
-from claude1.undo import UndoStack
+from claude1.undo import BashUndoManager, UndoStack
 
 if TYPE_CHECKING:
     from claude1.config import AppConfig
@@ -30,6 +30,7 @@ class ToolRegistry:
     ):
         self._tools: dict[str, BaseTool] = {}
         self.undo_stack = UndoStack()
+        self.bash_undo = BashUndoManager()
         self._register_all(
             working_dir,
             config=config,
@@ -53,7 +54,7 @@ class ToolRegistry:
             ReadFileTool(working_dir),
             WriteFileTool(working_dir, undo_stack=self.undo_stack),
             EditFileTool(working_dir, undo_stack=self.undo_stack),
-            BashTool(working_dir),
+            BashTool(working_dir, bash_undo=self.bash_undo),
             GlobSearchTool(working_dir),
             GrepSearchTool(working_dir),
             ListDirTool(working_dir),
@@ -97,6 +98,38 @@ class ToolRegistry:
                     is_subtask=is_subtask,
                 )
             )
+
+        # Wallet / Jupiter financial tools (optional: solders, base58)
+        try:
+            from claude1.wallet import SolanaWallet
+            from claude1.tools.wallet_tools import (
+                WalletBalanceTool, TokenPriceTool, TokenSearchTool, TokenShieldTool,
+                SwapTokensTool, CreateLimitOrderTool, CancelLimitOrderTool,
+                ListLimitOrdersTool, CreateDCAOrderTool, CancelDCAOrderTool,
+                ListDCAOrdersTool, LendDepositTool, SendTokensTool,
+                PortfolioPositionsTool,
+            )
+            wallet = SolanaWallet()
+            tools.extend([
+                # Read-only tools
+                WalletBalanceTool(working_dir, wallet=wallet),
+                TokenPriceTool(working_dir),
+                TokenSearchTool(working_dir),
+                TokenShieldTool(working_dir),
+                ListLimitOrdersTool(working_dir, wallet=wallet),
+                ListDCAOrdersTool(working_dir, wallet=wallet),
+                PortfolioPositionsTool(working_dir, wallet=wallet),
+                # Transaction tools (require confirmation)
+                SwapTokensTool(working_dir, wallet=wallet),
+                CreateLimitOrderTool(working_dir, wallet=wallet),
+                CancelLimitOrderTool(working_dir, wallet=wallet),
+                CreateDCAOrderTool(working_dir, wallet=wallet),
+                CancelDCAOrderTool(working_dir, wallet=wallet),
+                LendDepositTool(working_dir, wallet=wallet),
+                SendTokensTool(working_dir, wallet=wallet),
+            ])
+        except (ImportError, Exception):
+            pass  # Wallet deps not installed or not configured
 
         # Register self-awareness tools
         try:
