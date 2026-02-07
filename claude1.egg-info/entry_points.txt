@@ -1,2 +1,2 @@
 [console_scripts]
-claude1 = claude1_cli:cli
+claude1 = claude1.cli:cli

@@ -1,12 +1,1 @@
-claude1_cli
-config
-llm
-main
-model_profiles
-repl
-session
-stats
-system_prompt
-tools
-ui
-undo
+claude1

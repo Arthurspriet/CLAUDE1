@@ -4,6 +4,14 @@ Version: 0.1.0
 Summary: Local coding assistant powered by Ollama
 Requires-Python: >=3.10
 Requires-Dist: click
+Requires-Dist: huggingface_hub
 Requires-Dist: ollama
 Requires-Dist: prompt_toolkit
 Requires-Dist: rich
+Requires-Dist: diffusers>=0.30.0
+Requires-Dist: torch>=2.0.0
+Requires-Dist: torchvision
+Requires-Dist: transformers>=4.40.0
+Requires-Dist: accelerate>=0.30.0
+Requires-Dist: imageio[ffmpeg]
+Requires-Dist: pillow

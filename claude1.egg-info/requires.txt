@@ -1,4 +1,12 @@
 click
+huggingface_hub
 ollama
 prompt_toolkit
 rich
+diffusers>=0.30.0
+torch>=2.0.0
+torchvision
+transformers>=4.40.0
+accelerate>=0.30.0
+imageio[ffmpeg]
+pillow
